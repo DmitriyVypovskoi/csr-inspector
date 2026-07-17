@@ -281,7 +281,7 @@ function renderPublicKey(publicKey) {
     appendField(
         elements.publicKeyContent,
         "Algorithm",
-        publicKey?.display_name || publicKey?.algorithm,
+        publicKey?.algorithm || publicKey?.display_name,
     );
 
     appendField(
@@ -413,7 +413,7 @@ function renderSignature(signature) {
     appendField(
         fields,
         "Signature algorithm",
-        signature?.display_name || signature?.algorithm,
+        signature?.algorithm || signature?.display_name,
     );
 
     appendField(
