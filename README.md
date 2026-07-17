@@ -8,11 +8,8 @@ CSR Inspector displays the request subject, Subject Alternative Names, public ke
 
 The application is written in Go and uses only the standard browser APIs on the frontend.
 
-<!-- Add a screenshot after creating docs/images/csr-inspector.png
-
 ![CSR Inspector interface](docs/images/csr-inspector.png)
 
--->
 
 ## Features
 
