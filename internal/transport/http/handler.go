@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/DmitriyVypovskoi/csr-inspector/internal/csr"
@@ -12,6 +13,7 @@ import (
 
 type Handler struct {
 	maxRequestSize int64
+	logger         *slog.Logger
 }
 
 type errorResponse struct {
@@ -23,9 +25,24 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-func NewHandler(maxRequestSize int64) *Handler {
+type parseErrorDetails struct {
+	Status   int
+	Code     string
+	Message  string
+	LogCause bool
+}
+
+func NewHandler(
+	maxRequestSize int64,
+	logger *slog.Logger,
+) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &Handler{
 		maxRequestSize: maxRequestSize,
+		logger:         logger,
 	}
 }
 
@@ -59,24 +76,11 @@ func (h *Handler) parseCSR(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
-	/*
-		CSR может содержать внутренние доменные имена,
-		IP-адреса и сведения об организации.
-
-		Запрещаем кэширование как успешных ответов,
-		так и сообщений об ошибках.
-	*/
 	writer.Header().Set(
 		"Cache-Control",
 		"no-store",
 	)
 
-	/*
-		Ограничиваем размер запроса до чтения тела.
-
-		Если HTTP_MAX_REQUEST_SIZE равен 131072,
-		то максимальный размер тела — 128 KiB.
-	*/
 	request.Body = http.MaxBytesReader(
 		writer,
 		request.Body,
@@ -89,6 +93,25 @@ func (h *Handler) parseCSR(
 		var maxBytesError *http.MaxBytesError
 
 		if errors.As(err, &maxBytesError) {
+			h.logger.WarnContext(
+				request.Context(),
+				"CSR request rejected",
+				slog.String(
+					"request_id",
+					requestIDFromContext(
+						request.Context(),
+					),
+				),
+				slog.String(
+					"error_code",
+					"request_too_large",
+				),
+				slog.Int(
+					"status",
+					http.StatusRequestEntityTooLarge,
+				),
+			)
+
 			h.writeError(
 				writer,
 				http.StatusRequestEntityTooLarge,
@@ -98,6 +121,21 @@ func (h *Handler) parseCSR(
 
 			return
 		}
+
+		h.logger.ErrorContext(
+			request.Context(),
+			"Failed to read CSR request body",
+			slog.String(
+				"request_id",
+				requestIDFromContext(
+					request.Context(),
+				),
+			),
+			slog.String(
+				"error",
+				err.Error(),
+			),
+		)
 
 		h.writeError(
 			writer,
@@ -111,7 +149,11 @@ func (h *Handler) parseCSR(
 
 	info, err := csr.ParsePEM(input)
 	if err != nil {
-		h.writeParseError(writer, err)
+		h.writeParseError(
+			writer,
+			request,
+			err,
+		)
 
 		return
 	}
@@ -125,99 +167,132 @@ func (h *Handler) parseCSR(
 
 func (h *Handler) writeParseError(
 	writer http.ResponseWriter,
+	request *http.Request,
 	err error,
 ) {
+	details := classifyParseError(err)
+
+	attributes := []slog.Attr{
+		slog.String(
+			"request_id",
+			requestIDFromContext(
+				request.Context(),
+			),
+		),
+		slog.String(
+			"error_code",
+			details.Code,
+		),
+		slog.Int(
+			"status",
+			details.Status,
+		),
+	}
+
+	if details.LogCause {
+		attributes = append(
+			attributes,
+			slog.String(
+				"cause",
+				err.Error(),
+			),
+		)
+	}
+
+	h.logger.LogAttrs(
+		request.Context(),
+		slog.LevelWarn,
+		"CSR parsing rejected",
+		attributes...,
+	)
+
+	h.writeError(
+		writer,
+		details.Status,
+		details.Code,
+		details.Message,
+	)
+}
+
+func classifyParseError(
+	err error,
+) parseErrorDetails {
 	switch {
 	case errors.Is(err, csr.ErrEmptyInput):
-		h.writeError(
-			writer,
-			http.StatusBadRequest,
-			"empty_request",
-			"The certificate signing request is empty.",
-		)
+		return parseErrorDetails{
+			Status:  http.StatusBadRequest,
+			Code:    "empty_request",
+			Message: "The certificate signing request is empty.",
+		}
 
 	case errors.Is(err, csr.ErrInvalidPEM):
-		h.writeError(
-			writer,
-			http.StatusBadRequest,
-			"invalid_pem",
-			"The input is not a valid PEM-encoded CSR.\n\n"+
-				"Check that the BEGIN and END lines are present, "+
-				"contain exactly five hyphens on each side, "+
-				"and use matching supported labels.\n\n"+
-				"Expected format:\n"+
-				"-----BEGIN CERTIFICATE REQUEST-----\n"+
-				"...\n"+
-				"-----END CERTIFICATE REQUEST-----\n\n"+
-				"The legacy NEW CERTIFICATE REQUEST label "+
+		return parseErrorDetails{
+			Status: http.StatusBadRequest,
+			Code:   "invalid_pem",
+			Message: "The input is not a valid PEM-encoded CSR.\n\n" +
+				"Check that the BEGIN and END lines are present, " +
+				"contain exactly five hyphens on each side, " +
+				"and use matching supported labels.\n\n" +
+				"Expected format:\n" +
+				"-----BEGIN CERTIFICATE REQUEST-----\n" +
+				"...\n" +
+				"-----END CERTIFICATE REQUEST-----\n\n" +
+				"The legacy NEW CERTIFICATE REQUEST label " +
 				"is also supported.",
-		)
+		}
 
 	case errors.Is(err, csr.ErrUnsupportedPEMType):
-		h.writeUnsupportedPEMTypeError(
-			writer,
-			err,
-		)
+		return classifyUnsupportedPEMType(err)
 
 	case errors.Is(err, csr.ErrPEMHeaders):
-		h.writeError(
-			writer,
-			http.StatusBadRequest,
-			"unsupported_pem_headers",
-			"The CSR PEM block must not contain additional headers.",
-		)
+		return parseErrorDetails{
+			Status: http.StatusBadRequest,
+			Code:   "unsupported_pem_headers",
+			Message: "The CSR PEM block must not contain " +
+				"additional headers.",
+		}
 
 	case errors.Is(err, csr.ErrTrailingData):
-		h.writeError(
-			writer,
-			http.StatusBadRequest,
-			"unexpected_trailing_data",
-			"Unexpected data was found after the CSR PEM block.",
-		)
+		return parseErrorDetails{
+			Status: http.StatusBadRequest,
+			Code:   "unexpected_trailing_data",
+			Message: "Unexpected data was found after " +
+				"the CSR PEM block.",
+		}
 
 	default:
-		/*
-			Не возвращаем пользователю err.Error(), поскольку
-			там могут находиться внутренние ошибки ASN.1 parser.
-		*/
-		h.writeError(
-			writer,
-			http.StatusUnprocessableEntity,
-			"csr_parse_failed",
-			"The CSR could not be parsed. "+
-				"The PKCS#10 structure may be malformed.",
-		)
+		return parseErrorDetails{
+			Status:   http.StatusUnprocessableEntity,
+			Code:     "csr_parse_failed",
+			Message:  "The CSR could not be parsed. The PKCS#10 structure may be malformed.",
+			LogCause: true,
+		}
 	}
 }
 
-func (h *Handler) writeUnsupportedPEMTypeError(
-	writer http.ResponseWriter,
+func classifyUnsupportedPEMType(
 	err error,
-) {
+) parseErrorDetails {
 	var pemTypeError *csr.UnsupportedPEMTypeError
 
 	if !errors.As(err, &pemTypeError) {
-		h.writeError(
-			writer,
-			http.StatusBadRequest,
-			"unsupported_pem_type",
-			"Unsupported PEM type. Expected CERTIFICATE REQUEST "+
-				"or NEW CERTIFICATE REQUEST.",
-		)
-
-		return
+		return parseErrorDetails{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "unsupported_pem_type",
+			Message: "Unsupported PEM type.",
+		}
 	}
 
 	switch pemTypeError.Type {
 	case "CERTIFICATE", "X509 CERTIFICATE":
-		h.writeError(
-			writer,
-			http.StatusUnprocessableEntity,
-			"certificate_instead_of_csr",
-			"This appears to be an X.509 certificate, "+
-				"not a certificate signing request. "+
-				"Certificate inspection may be added in a future version.",
-		)
+		return parseErrorDetails{
+			Status: http.StatusUnprocessableEntity,
+			Code:   "certificate_instead_of_csr",
+			Message: "This appears to be an X.509 certificate, " +
+				"not a certificate signing request. " +
+				"Certificate inspection may be added " +
+				"in a future version.",
+		}
 
 	case "PRIVATE KEY",
 		"RSA PRIVATE KEY",
@@ -225,26 +300,24 @@ func (h *Handler) writeUnsupportedPEMTypeError(
 		"ENCRYPTED PRIVATE KEY",
 		"OPENSSH PRIVATE KEY":
 
-		h.writeError(
-			writer,
-			http.StatusUnprocessableEntity,
-			"private_key_instead_of_csr",
-			"This appears to be a private key, not a CSR. "+
-				"Do not upload or share private keys.",
-		)
+		return parseErrorDetails{
+			Status: http.StatusUnprocessableEntity,
+			Code:   "private_key_instead_of_csr",
+			Message: "This appears to be a private key, " +
+				"not a CSR. Do not upload or share private keys.",
+		}
 
 	default:
-		h.writeError(
-			writer,
-			http.StatusUnprocessableEntity,
-			"unsupported_pem_type",
-			fmt.Sprintf(
+		return parseErrorDetails{
+			Status: http.StatusUnprocessableEntity,
+			Code:   "unsupported_pem_type",
+			Message: fmt.Sprintf(
 				"Unsupported PEM type %q. Expected "+
 					"CERTIFICATE REQUEST or "+
 					"NEW CERTIFICATE REQUEST.",
 				pemTypeError.Type,
 			),
-		)
+		}
 	}
 }
 

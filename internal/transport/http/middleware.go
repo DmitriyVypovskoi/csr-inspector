@@ -1,11 +1,71 @@
 package httptransport
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
 )
+
+type requestIDContextKey struct{}
+
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(
+		func(
+			writer http.ResponseWriter,
+			request *http.Request,
+		) {
+			requestID := newRequestID()
+
+			writer.Header().Set(
+				"X-Request-ID",
+				requestID,
+			)
+
+			ctx := context.WithValue(
+				request.Context(),
+				requestIDContextKey{},
+				requestID,
+			)
+
+			next.ServeHTTP(
+				writer,
+				request.WithContext(ctx),
+			)
+		},
+	)
+}
+
+func requestIDFromContext(
+	ctx context.Context,
+) string {
+	requestID, ok := ctx.Value(
+		requestIDContextKey{},
+	).(string)
+
+	if !ok {
+		return ""
+	}
+
+	return requestID
+}
+
+func newRequestID() string {
+	var value [16]byte
+
+	if _, err := rand.Read(value[:]); err == nil {
+		return hex.EncodeToString(value[:])
+	}
+
+	return fmt.Sprintf(
+		"fallback-%d",
+		time.Now().UnixNano(),
+	)
+}
 
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(
@@ -13,12 +73,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			writer http.ResponseWriter,
 			request *http.Request,
 		) {
-			/*
-				Наш frontend загружает CSS, JavaScript и выполняет
-				fetch только с текущего origin.
-
-				Поэтому можно использовать достаточно строгую CSP.
-			*/
 			writer.Header().Set(
 				"Content-Security-Policy",
 				"default-src 'self'; "+
@@ -67,10 +121,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 				"same-origin",
 			)
 
-			next.ServeHTTP(
-				writer,
-				request,
-			)
+			next.ServeHTTP(writer, request)
 		},
 	)
 }
@@ -90,17 +141,14 @@ func Recover(
 					return
 				}
 
-				/*
-					Stack trace пишем только в серверный лог.
-
-					Пользователю не раскрываем внутренние пути,
-					названия функций и детали panic.
-				*/
-				logger.Error(
+				logger.ErrorContext(
+					request.Context(),
 					"HTTP handler panic recovered",
-					slog.Any(
-						"panic",
-						recovered,
+					slog.String(
+						"request_id",
+						requestIDFromContext(
+							request.Context(),
+						),
 					),
 					slog.String(
 						"method",
@@ -110,15 +158,14 @@ func Recover(
 						"path",
 						request.URL.Path,
 					),
+					slog.Any(
+						"panic",
+						recovered,
+					),
 					slog.String(
 						"stack",
 						string(debug.Stack()),
 					),
-				)
-
-				writer.Header().Set(
-					"Content-Type",
-					"text/plain; charset=utf-8",
 				)
 
 				writer.Header().Set(
@@ -133,10 +180,7 @@ func Recover(
 				)
 			}()
 
-			next.ServeHTTP(
-				writer,
-				request,
-			)
+			next.ServeHTTP(writer, request)
 		},
 	)
 }
@@ -156,18 +200,27 @@ func AccessLog(
 				ResponseWriter: writer,
 			}
 
-			next.ServeHTTP(
-				recorder,
-				request,
-			)
+			next.ServeHTTP(recorder, request)
 
 			status := recorder.status
 			if status == 0 {
 				status = http.StatusOK
 			}
 
-			logger.Info(
+			if request.URL.Path == "/health" &&
+				status == http.StatusOK {
+				return
+			}
+
+			duration := time.Since(startedAt)
+
+			logger.InfoContext(
+				request.Context(),
 				"HTTP request completed",
+				slog.String(
+					"request_id",
+					requestIDFromContext(request.Context()),
+				),
 				slog.String(
 					"method",
 					request.Method,
@@ -184,13 +237,9 @@ func AccessLog(
 					"response_bytes",
 					recorder.bytes,
 				),
-				slog.Duration(
-					"duration",
-					time.Since(startedAt),
-				),
-				slog.String(
-					"remote_address",
-					request.RemoteAddr,
+				slog.Float64(
+					"duration_ms",
+					float64(duration.Microseconds())/1000,
 				),
 			)
 		},

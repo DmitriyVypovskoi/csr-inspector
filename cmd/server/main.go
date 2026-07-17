@@ -40,6 +40,7 @@ func run(logger *slog.Logger) error {
 
 	apiHandler := httptransport.NewHandler(
 		cfg.HTTP.MaxRequestSize,
+		logger,
 	)
 
 	apiRoutes := apiHandler.Routes()
@@ -78,12 +79,14 @@ func run(logger *slog.Logger) error {
 		web.Handler(),
 	)
 
-	handler := httptransport.AccessLog(
-		logger,
-		httptransport.Recover(
+	handler := httptransport.RequestID(
+		httptransport.AccessLog(
 			logger,
-			httptransport.SecurityHeaders(
-				router,
+			httptransport.Recover(
+				logger,
+				httptransport.SecurityHeaders(
+					router,
+				),
 			),
 		),
 	)

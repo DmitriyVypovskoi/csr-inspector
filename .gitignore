@@ -33,3 +33,7 @@ temp/
 # Local PKI test artifacts
 *.key
 *.csr
+
+# Allow synthetic CSR fixtures used by automated tests.
+!internal/csr/testdata/
+!internal/csr/testdata/*.csr

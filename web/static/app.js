@@ -977,7 +977,15 @@ async function parseCSR() {
             const errorMessage =
                 await extractErrorMessage(response);
 
-            throw new Error(errorMessage);
+            const requestID = response.headers.get(
+                "X-Request-ID",
+            );
+
+            const message = requestID
+                ? `${errorMessage}\n\nRequest ID: ${requestID}`
+                : errorMessage;
+
+            throw new Error(message);
         }
 
         const result = await response.json();
