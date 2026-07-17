@@ -1,8 +1,11 @@
 # CSR Inspector
 
 [![CI](https://github.com/DmitriyVypovskoi/csr-inspector/actions/workflows/ci.yaml/badge.svg)](https://github.com/DmitriyVypovskoi/csr-inspector/actions/workflows/ci.yaml)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Open%20CSR%20Inspector-2ea44f?style=flat)](https://csr-inspector-latest.onrender.com/)
 
 A lightweight web application for inspecting, validating, and analyzing PKCS#10 certificate signing requests.
+
+**Try it online:** [https://csr-inspector-latest.onrender.com/](https://csr-inspector-latest.onrender.com/)
 
 CSR Inspector displays the request subject, Subject Alternative Names, public key information, requested extensions, signature algorithm, self-signature status, and potential quality or compatibility issues.
 
