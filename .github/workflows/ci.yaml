@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Show Go version
+        run: go version
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check go.mod and go.sum
+        shell: bash
+        run: |
+          go mod tidy
+
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo
+            echo "go.mod or go.sum is not up to date."
+            echo "Run 'go mod tidy' locally and commit the changes."
+            exit 1
+          fi
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted_files="$(gofmt -l .)"
+
+          if [ -n "$unformatted_files" ]; then
+            echo "The following Go files are not formatted:"
+            echo "$unformatted_files"
+            echo
+            echo "Run 'gofmt -w .' locally."
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        run: go test -race -count=1 ./...
+
+      - name: Build server
+        run: go build ./cmd/server
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Check frontend JavaScript syntax
+        run: node --check web/static/app.js
+
+  vulnerabilities:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan for known vulnerabilities
+        run: govulncheck ./...

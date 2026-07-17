@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="description"
+        content="Inspect and validate PKCS#10 certificate signing requests"
+    >
+
+    <title>CSR Inspector</title>
+
+    <link
+        rel="stylesheet"
+        href="/styles.css"
+    >
+</head>
+
+<body>
+    <header class="site-header">
+        <div class="container header-content">
+            <div>
+                <a
+                    class="logo"
+                    href="/"
+                >
+                    CSR Inspector
+                </a>
+
+                <p class="subtitle">
+                    Inspect PKCS#10 certificate signing requests
+                </p>
+            </div>
+
+            <a
+                class="github-link"
+                href="https://github.com/DmitriyVypovskoi/csr-inspector"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                GitHub
+            </a>
+        </div>
+    </header>
+
+    <main class="container main-content">
+        <section class="panel input-panel">
+            <div class="panel-header">
+                <div>
+                    <h1>Certificate Signing Request</h1>
+
+                    <p>
+                        Choose a CSR file or paste a PEM-encoded
+                        certificate signing request below.
+                    </p>
+                </div>
+            </div>
+
+            <div
+                id="drop-zone"
+                class="drop-zone"
+                role="button"
+                tabindex="0"
+                aria-controls="csr-file-input"
+            >
+                <input
+                    id="csr-file-input"
+                    class="sr-only"
+                    type="file"
+                    accept=".csr,.pem,.txt,application/pkcs10,text/plain"
+                >
+
+                <div class="drop-zone-content">
+                    <strong>Drop a CSR file here</strong>
+
+                    <span>
+                        or click to choose a .csr or .pem file
+                    </span>
+
+                    <span
+                        id="selected-file-name"
+                        class="selected-file-name hidden"
+                    ></span>
+                </div>
+            </div>
+
+            <div class="input-separator">
+                <span>or paste PEM</span>
+            </div>
+
+            <label
+                class="sr-only"
+                for="csr-input"
+            >
+                PEM encoded certificate signing request
+            </label>
+
+            <textarea
+                id="csr-input"
+                class="csr-input"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="-----BEGIN CERTIFICATE REQUEST-----
+MIIC...
+-----END CERTIFICATE REQUEST-----"
+            ></textarea>
+
+            <div class="actions">
+                <button
+                    id="parse-button"
+                    class="button button-primary"
+                    type="button"
+                >
+                    Inspect CSR
+                </button>
+
+                <button
+                    id="clear-button"
+                    class="button button-secondary"
+                    type="button"
+                >
+                    Clear
+                </button>
+            </div>
+
+            <div
+                id="request-status"
+                class="request-status"
+                role="status"
+                aria-live="polite"
+            ></div>
+        </section>
+
+        <section
+            id="error-panel"
+            class="panel error-panel hidden"
+            aria-live="assertive"
+        >
+            <h2>Unable to inspect CSR</h2>
+
+            <p id="error-message"></p>
+        </section>
+
+        <section
+            id="result-root"
+            class="results hidden"
+        >
+            <section
+                id="warnings-panel"
+                class="panel warning-panel hidden"
+            >
+                <h2>Warnings</h2>
+
+                <ul id="warnings-list"></ul>
+            </section>
+
+            <section
+                id="findings-panel"
+                class="panel findings-panel hidden"
+            >
+                <h2>CSR Quality Findings</h2>
+
+                <div
+                    id="findings-content"
+                    class="findings-list"
+                ></div>
+            </section>
+
+            <div class="result-grid">
+                <section class="panel">
+                    <h2>Subject</h2>
+
+                    <div
+                        id="subject-summary"
+                        class="field-grid"
+                    ></div>
+                </section>
+
+                <section class="panel">
+                    <h2>Subject Alternative Names</h2>
+
+                    <div id="san-content"></div>
+                </section>
+            </div>
+
+            <div class="result-grid">
+                <section class="panel">
+                    <h2>Public Key</h2>
+
+                    <div
+                        id="public-key-content"
+                        class="field-grid"
+                    ></div>
+                </section>
+
+                <section class="panel">
+                    <h2>CSR Self-Signature</h2>
+
+                    <div id="signature-content"></div>
+                </section>
+            </div>
+
+            <section class="panel">
+                <h2>Distinguished Name</h2>
+
+                <div id="rdn-content"></div>
+            </section>
+
+            <section class="panel">
+                <h2>Extensions</h2>
+
+                <div id="extensions-content"></div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-title-row">
+                    <h2>Raw JSON</h2>
+
+                    <button
+                        id="copy-json-button"
+                        class="button button-small button-secondary"
+                        type="button"
+                    >
+                        Copy JSON
+                    </button>
+                </div>
+
+                <pre
+                    id="raw-json"
+                    class="raw-json"
+                ></pre>
+            </section>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            CSR Inspector does not upload or store private keys.
+            Only certificate signing requests should be submitted.
+        </div>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>

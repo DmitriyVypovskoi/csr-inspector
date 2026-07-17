@@ -29,3 +29,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Local PKI test artifacts
+*.key
+*.csr

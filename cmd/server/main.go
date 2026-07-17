@@ -11,11 +11,15 @@ import (
 
 	"github.com/DmitriyVypovskoi/csr-inspector/internal/config"
 	httptransport "github.com/DmitriyVypovskoi/csr-inspector/internal/transport/http"
+	"github.com/DmitriyVypovskoi/csr-inspector/web"
 )
 
 func main() {
 	logger := slog.New(
-		slog.NewJSONHandler(os.Stdout, nil),
+		slog.NewJSONHandler(
+			os.Stdout,
+			nil,
+		),
 	)
 
 	if err := run(logger); err != nil {
@@ -23,6 +27,7 @@ func main() {
 			"application stopped",
 			slog.String("error", err.Error()),
 		)
+
 		os.Exit(1)
 	}
 }
@@ -33,11 +38,59 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	handler := httptransport.NewHandler()
+	apiHandler := httptransport.NewHandler(
+		cfg.HTTP.MaxRequestSize,
+	)
+
+	apiRoutes := apiHandler.Routes()
+
+	router := http.NewServeMux()
+
+	/*
+		Передаём API-запросы существующему роутеру.
+
+		Более конкретные пути имеют приоритет
+		над корневым маршрутом "/".
+	*/
+	router.Handle(
+		"/api/",
+		apiRoutes,
+	)
+
+	router.Handle(
+		"/health",
+		apiRoutes,
+	)
+
+	/*
+		Web UI и его статические файлы:
+
+			/
+			/styles.css
+			/app.js
+
+		Здесь нельзя использовать "GET /" вместе
+		с method-agnostic шаблоном "/api/", потому что
+		новый ServeMux считает такие шаблоны конфликтующими.
+	*/
+	router.Handle(
+		"/",
+		web.Handler(),
+	)
+
+	handler := httptransport.AccessLog(
+		logger,
+		httptransport.Recover(
+			logger,
+			httptransport.SecurityHeaders(
+				router,
+			),
+		),
+	)
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Address,
-		Handler:           handler.Routes(),
+		Handler:           handler,
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
@@ -56,7 +109,10 @@ func run(logger *slog.Logger) error {
 	go func() {
 		logger.Info(
 			"HTTP server started",
-			slog.String("address", cfg.HTTP.Address),
+			slog.String(
+				"address",
+				cfg.HTTP.Address,
+			),
 		)
 
 		serverErrors <- server.ListenAndServe()
